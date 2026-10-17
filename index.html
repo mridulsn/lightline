@@ -1056,7 +1056,7 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
 
   // for the automated checks only
   window.LightlineApp = {
-    state: function () { return { mode: S.mode, day: S.day, level: S.puzzle.level, budget: S.puzzle.budget, placed: placed(), solved: S.solved, moves: S.moves, lit: TR.litCount, targets: TR.targets, pl: S.pl.join(''), cells: S.puzzle.cells }; },
+    state: function () { return { mode: S.mode, day: S.day, level: S.puzzle.level, budget: S.puzzle.budget, placed: placed(), solved: S.solved, moves: S.moves, lit: TR.litCount, targets: TR.targets, pl: S.pl.join(''), cells: S.puzzle.cells, emitter: S.puzzle.emitter }; },
     shareText: function () { return L.shareText(shareInfo()); }
   };
 
