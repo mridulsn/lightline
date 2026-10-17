@@ -720,12 +720,12 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
     var e = { k: S.mode === 'daily' ? 'd' : 'p', l: S.puzzle.level, at: Date.now(), t: Math.round(S.ms), m: S.moves, u: placed(), b: S.puzzle.budget, h: S.hints, r: S.revealed ? 1 : 0 };
     if (e.k === 'd') { e.id = 'd:' + S.day; e.day = S.day; } else e.id = 'p:' + S.puzzle.seed;
     if (!results) return null;
-    var before = playerLv(), had = results.some(function (x) { return x.id === e.id; });
+    var before = playerLv(), xpBefore = totalXp();
     results = L.mergeHistory(results, [e]);
     stats = L.statsFromHistory(results);
     if (!saveResults()) notices.push('Progress could not be saved on this device.');
     cloudSoon();
-    return { xp: had ? 0 : L.xpFor(e), before: before, after: playerLv() };
+    return { xp: totalXp() - xpBefore, before: before, after: playerLv() };
   }
 
   // ---------- hints and the answer ----------
