@@ -41,7 +41,7 @@ Testing (in `../lightline-tests`):
   that light can never loop forever, run the solver on a sample, and test streaks, the share text, XP, levels, locks,
   history merging and cloud-read handling.
 - `python smoke.py` runs 205 browser checks at 390 px and 1366 px. It solves today's puzzle by tapping, then checks
-  the win card, the share text and clipboard, reload, practice mode, unreadable stats, reduced motion and touch. It
+  the win card, the share text and clipboard, reload, practice mode, unreadable stats, the Motion switch, retry after a shown answer and touch. It
   also covers hints, Show answer, the trial run, level locks, and log in and sync against mocked sign-in and Firestore
   endpoints (Discord return, forged state, Google, failed reads, merge, sign out, delete). It also confirms there's no
   horizontal scroll, no console errors and no external requests other than Google's sign-in script.

@@ -293,9 +293,7 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
   header:has(.sample:not([hidden])) .word { font-size: 22px; }
   .sample { font-size: 9.5px; padding: 3px 5px; letter-spacing: .5px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .aur, .stars, .stars2, .word, dialog[open], .stat.bump, .board.won { animation: none !important; }
-}
+html.calm .aur, html.calm .stars, html.calm .stars2, html.calm .word, html.calm dialog[open], html.calm .stat.bump, html.calm .board.won { animation: none !important; }
 </style>
 </head>
 <body>
@@ -345,6 +343,7 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
       <button type="button" class="btn" id="answerBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Answer</button>
       <button type="button" class="btn" id="newPuzzle" hidden>New puzzle</button>
       <button type="button" class="btn primary" id="seeResult" hidden>See result</button>
+      <button type="button" class="btn primary" id="retryBtn" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Retry</button>
     </div>
     <div class="coach" id="coach" hidden>
       <small id="coachStep">TRIAL RUN</small>
@@ -356,7 +355,7 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
   </main>
 </div>
 
-<footer>Plays entirely in your browser. Your progress stays on this device unless you log in to back it up. <button type="button" class="link" id="aboutBtn">About</button> <a href="https://mridulsaravanan.com/">More projects</a></footer>
+<footer>Plays entirely in your browser. Your progress stays on this device unless you log in to back it up. <button type="button" class="link" id="aboutBtn">About</button> <button type="button" class="link" id="motionBtn">Motion: on</button> <a href="https://mridulsaravanan.com/">More projects</a></footer>
 
 <dialog id="help" aria-labelledby="helpTitle">
   <div class="dlg">
@@ -489,7 +488,9 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
   var L = window.Lightline, C = window.LightlineCloud;
   var $ = function (id) { return document.getElementById(id); };
   var N = L.SIZE, M = 0.6, SPAN = N + 2 * M;
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // the game's own Motion switch (footer), kept per device. Not the system setting: Windows "best performance"
+  // turns that on for many laptops, and the game then lost all its movement on desktop.
+  var reduce = false;
   var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   var LIVE_URL = 'mridulsaravanan.com/lightline/';
   var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -511,6 +512,9 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
   var stats = statsRead.ok ? statsRead.value : null; // null: unreadable, so it is never overwritten
   var prefsRead = readJSON('prefs');
   var prefs = prefsRead.ok && prefsRead.value && typeof prefsRead.value === 'object' ? prefsRead.value : {};
+  var motionRead = readJSON('motion');
+  reduce = motionRead.ok && motionRead.value === 'calm';
+  document.documentElement.classList.toggle('calm', reduce);
   var notices = [];
   if (!statsRead.ok) notices.push('Your saved stats on this device could not be read, so they are left untouched and today\'s result will not be added to them.');
   // every finished puzzle; stats, streak, XP and level are always rebuilt from this list (null: unreadable, never overwritten)
@@ -560,10 +564,10 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
       if (placed() > S.puzzle.budget) { for (i = 0; i < N * N; i++) S.pl[i] = '.'; }
       S.moves = v.moves | 0; S.ms = +v.ms || 0;
       S.solved = !!v.solved && L.isSolved(S.puzzle, S.pl);
-      S.recorded = S.solved; S.celebrated = S.solved;
+      S.revealed = !!v.revealed; // also true while retrying after a shown answer, which is already recorded
+      S.recorded = S.solved || S.revealed; S.celebrated = S.solved;
       S.hintCells = Array.isArray(v.hc) ? v.hc.filter(function (x) { return x >= 0 && x < N * N && S.sol[x] !== '.'; }).slice(0, L.MAX_HINTS) : [];
       S.hints = Math.max(S.hintCells.length, Math.min(L.MAX_HINTS, v.hints | 0));
-      S.revealed = !!v.revealed && S.solved;
       if (S.moves && !S.solved) startClock();
     }
     begin();
@@ -627,6 +631,7 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
     $('hintBtn').setAttribute('aria-label', 'Hint, ' + (L.MAX_HINTS - S.hints) + ' left');
     $('board').classList.toggle('locked', S.solved);
     $('seeResult').hidden = !S.solved || S.revealed || trial;
+    $('retryBtn').hidden = !S.solved || !S.revealed || trial;
     $('newPuzzle').hidden = S.mode !== 'practice';
     $('coach').hidden = !trial;
     var vis = Array.prototype.filter.call(document.querySelectorAll('.controls .btn'), function (b) { b.classList.remove('wide'); return !b.hidden; });
@@ -711,7 +716,8 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
     if (S.mode === 'trial') { status(''); return; }
     S.gain = recordFinish();
     showNotice();
-    status(S.mode === 'daily' ? 'Solved. A new puzzle arrives at midnight.' : 'Solved. Try another?');
+    if (S.revealed) status('Solved it yourself this time. It still does not count, because the answer was shown.');
+    else status(S.mode === 'daily' ? 'Solved. A new puzzle arrives at midnight.' : 'Solved. Try another?');
   }
   // add the finished puzzle to history (a shown answer is recorded too, worth nothing); the trial never is
   function recordFinish() {
@@ -743,7 +749,7 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
     var i = hintTarget(); if (i < 0) return;
     S.hints++; S.hintCells.push(i); startClock();
     var full = S.pl[i] === '.' && placed() >= S.puzzle.budget;
-    status(full ? 'Hint: a mirror goes on the glowing square. Take one of yours back first.' : 'Hint: place a mirror on the glowing square, turned like the ghost. Hints halve the XP.');
+    status(full ? 'Hint: a mirror goes on the glowing square. Take one of yours back first.' : 'Hint: place a mirror on the glowing square, turned like the ghost.' + (S.revealed ? '' : ' Hints halve the XP.'));
     ripple(i); sync(); saveDaily(); requestDraw();
   }
   function reveal() {
@@ -755,7 +761,16 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
     S.solved = true; stopClock();
     S.gain = recordFinish();
     sync(); saveDaily(); showNotice();
-    status('Answer shown. This puzzle does not count towards your streak or XP.');
+    status('Answer shown. This puzzle does not count towards your streak or XP. Retry clears the board so you can solve it yourself.');
+  }
+  // after a shown answer: clear the board and solve it again; it was recorded at the reveal, so it never counts
+  function retry() {
+    if (!S.solved || !S.revealed || S.mode === 'trial') return;
+    for (var i = 0; i < N * N; i++) if (S.pl[i] !== '.') { mirrorAnim(i, S.pl[i], '.'); S.pl[i] = '.'; }
+    S.solved = false; S.celebrated = false; S.hist = []; S.moves = 0; S.ms = 0; S.t0 = 0; S.hints = 0; S.hintCells = [];
+    $('board').classList.remove('won');
+    retrace(true, -1); sync(); saveDaily();
+    status('Board cleared. Light all ' + TR.targets + ' crystals with ' + S.puzzle.budget + ' mirrors. It will not count, since the answer was shown.');
   }
 
   // ---------- trial run: a tiny guided puzzle that never touches stats or history ----------
@@ -1317,6 +1332,14 @@ dialog[open] { animation: rise .35s cubic-bezier(.2, .9, .3, 1.2); }
   $('hintBtn').addEventListener('click', hint);
   $('answerBtn').addEventListener('click', function () { if (!S.solved) $('reveal').showModal(); });
   $('revealYes').addEventListener('click', reveal);
+  $('retryBtn').addEventListener('click', retry);
+  function paintMotion() { $('motionBtn').textContent = reduce ? 'Motion: off' : 'Motion: on'; document.documentElement.classList.toggle('calm', reduce); }
+  $('motionBtn').addEventListener('click', function () {
+    reduce = !reduce; writeRaw('motion', reduce ? 'calm' : 'full'); paintMotion();
+    if (reduce) { front = 1e9; particles = []; ripples = []; wobbles = {}; for (var k in anim) { anim[k].ang = anim[k].tang; anim[k].sc = anim[k].tsc; } }
+    requestDraw();
+  });
+  paintMotion();
   $('tryBtn').addEventListener('click', startTrial);
   $('trialExit').addEventListener('click', function () { exitTrial(false); });
   $('trialPlay').addEventListener('click', function () { exitTrial(true); });
