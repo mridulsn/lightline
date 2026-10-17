@@ -353,8 +353,125 @@
     return stats.last === today || stats.last === shiftDay(today, -1) ? stats.streak : 0;
   }
 
+  // ---------- history, XP and levels ----------
+  /* One entry per finished puzzle (a win, or a puzzle whose answer was shown). Stats, streaks, XP and the player
+     level are always worked out from this list and never kept as running totals, so merging two devices can never
+     count a puzzle twice.
+       id  'd:YYYY-MM-DD' for a daily, 'p:<seed>' for a practice puzzle
+       k   'd' or 'p';  day (daily only);  l puzzle level 1..7;  at finish time in ms (0 if unknown)
+       t ms taken, m moves, u mirrors used, b budget, h hints used (0..3), r 1 if the answer was shown */
+  var XP = { Easy: 10, Medium: 20, Hard: 35, Expert: 50 };
+  var UNLOCK = { 2: 1, 4: 3, 6: 6, 7: 10 }; // practice level -> player level needed
+  var MAX_HINTS = 3;
+  function validEntry(e) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !LEVELS[e.l]) return false;
+    if (e.k === 'd') return typeof e.day === 'string' && !isNaN(parseDay(e.day)) && e.id === 'd:' + e.day;
+    return e.k === 'p' && e.id.indexOf('p:') === 0;
+  }
+  function cleanEntry(e) {
+    var o = { id: e.id, k: e.k, l: e.l, at: +e.at || 0, t: Math.max(0, Math.round(+e.t || 0)), m: e.m | 0, u: e.u | 0, b: e.b | 0,
+      h: Math.max(0, Math.min(MAX_HINTS, e.h | 0)), r: e.r ? 1 : 0 };
+    if (e.k === 'd') o.day = e.day;
+    return o;
+  }
+  // the same puzzle finished on two devices: keep a real win over a shown answer, then fewer hints, then the earlier finish
+  function better(a, b) {
+    if (a.r !== b.r) return a.r ? b : a;
+    if (a.h !== b.h) return a.h < b.h ? a : b;
+    var ta = a.at || Infinity, tb = b.at || Infinity;
+    if (ta !== tb) return ta < tb ? a : b;
+    return a.t <= b.t ? a : b;
+  }
+  function mergeHistory() {
+    var by = {}, ids = [];
+    for (var x = 0; x < arguments.length; x++) {
+      var list = arguments[x];
+      if (!list || !list.length) continue;
+      for (var i = 0; i < list.length; i++) {
+        if (!validEntry(list[i])) continue;
+        var e = cleanEntry(list[i]);
+        if (by[e.id]) by[e.id] = better(by[e.id], e); else { by[e.id] = e; ids.push(e.id); }
+      }
+    }
+    return ids.map(function (id) { return by[id]; }).sort(function (a, b) { return (a.at - b.at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+  }
+  // older saves only have stats.days: turn them into history entries with the same ids a new save would use
+  function historyFromStats(stats) {
+    if (!stats || !stats.days) return [];
+    return mergeHistory(Object.keys(stats.days).map(function (day) {
+      var d = stats.days[day] || {};
+      return { id: 'd:' + day, k: 'd', day: day, l: d.l || levelForDay(day), at: 0, t: d.t, m: d.m, u: d.u, b: d.b, h: d.h, r: 0 };
+    }));
+  }
+  // the stats object the page has always kept, rebuilt from history: daily wins only (shown answers do not count)
+  function statsFromHistory(hist) {
+    var s = emptyStats(), wins = (hist || []).filter(function (e) { return e.k === 'd' && !e.r; });
+    wins.sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : 0; });
+    wins.forEach(function (e) {
+      if (s.days[e.day]) return;
+      s.won++;
+      s.streak = s.last === shiftDay(e.day, -1) ? s.streak + 1 : 1;
+      if (s.streak > s.best) s.best = s.streak;
+      s.last = e.day;
+      s.days[e.day] = { t: e.t, m: e.m, u: e.u, b: e.b, l: e.l, h: e.h };
+    });
+    return s;
+  }
+  function xpFor(e) {
+    if (!e || e.r || !LEVELS[e.l]) return 0;
+    var base = XP[LEVELS[e.l].name] || 0;
+    return e.h > 0 ? Math.floor(base / 2) : base;
+  }
+  function totalXp(hist) { var n = 0; (hist || []).forEach(function (e) { n += xpFor(e); }); return n; }
+  // XP needed to reach a level: each level costs 10 more than the one before (20, 30, 40...), so 3 = 50, 6 = 200, 10 = 540
+  function xpToReach(lv) { return lv <= 1 ? 0 : 5 * (lv - 1) * (lv + 2); }
+  function levelInfo(xp) {
+    xp = Math.max(0, xp | 0);
+    var lv = 1;
+    while (xpToReach(lv + 1) <= xp) lv++;
+    var base = xpToReach(lv), next = xpToReach(lv + 1);
+    return { level: lv, xp: xp, base: base, next: next, into: xp - base, span: next - base, pct: (xp - base) / (next - base) };
+  }
+  function playerLevel(hist) { return levelInfo(totalXp(hist)).level; }
+  function unlockLevel(practiceLevel) { return UNLOCK[practiceLevel] || 1; }
+  function isUnlocked(practiceLevel, plv) { return plv >= unlockLevel(practiceLevel); }
+  // the practice level to use: the one asked for if it is open, else the hardest open one below it, else Easy
+  function practiceLevelFor(want, plv) {
+    var opts = [2, 4, 6, 7], best = 2;
+    opts.forEach(function (l) { if (l <= want && isUnlocked(l, plv)) best = l; });
+    return best;
+  }
+
+  // ---------- cloud copy: {v, history, prefs:{level, at}} ----------
+  // a backup that is there but cannot be understood is a failure, never "no backup"
+  function parseProfile(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o) || !Array.isArray(o.history)) return { ok: false };
+    var p = o.prefs && typeof o.prefs === 'object' && !Array.isArray(o.prefs) ? o.prefs : {};
+    var prefs = { at: +p.at || 0 };
+    if (UNLOCK[p.level]) prefs.level = p.level;
+    return { ok: true, value: { v: 1, history: mergeHistory(o.history), prefs: prefs } };
+  }
+  // history is a union by id (so nothing is ever counted twice); settings: the newest change wins
+  function mergeProfiles(local, cloud) {
+    var lp = (local && local.prefs) || { at: 0 }, cp = (cloud && cloud.prefs) || { at: 0 };
+    var prefs = (cp.at || 0) > (lp.at || 0) ? cp : lp;
+    return { v: 1, history: mergeHistory(local && local.history, cloud && cloud.history), prefs: JSON.parse(JSON.stringify(prefs)) };
+  }
+  /* A read of the cloud document. 404 = there is no backup yet (fine). 200 = parse it. Anything else, or a body that
+     cannot be read, is a failure: the caller must not write, or it could push an empty profile over a real one. */
+  function readPullResponse(status, doc) {
+    if (status === 404) return { ok: true, data: null };
+    if (status !== 200) return { ok: false, data: null };
+    var raw = doc && doc.fields && doc.fields.data && doc.fields.data.stringValue;
+    if (typeof raw !== 'string') return { ok: true, data: null };
+    var o;
+    try { o = JSON.parse(raw); } catch (e) { return { ok: false, data: null }; }
+    var p = parseProfile(o);
+    return p.ok ? { ok: true, data: p.value } : { ok: false, data: null };
+  }
+
   // ---------- share text (spoiler free: no positions, only the outcome) ----------
-  var GEM = '\uD83D\uDC8E', MIRROR = '\uD83E\uDE9E', CLOCK = '\u23F1\uFE0F', TAP = '\uD83D\uDC46', FIRE = '\uD83D\uDD25';
+  var GEM = '\uD83D\uDC8E', MIRROR = '\uD83E\uDE9E', CLOCK = '\u23F1\uFE0F', TAP = '\uD83D\uDC46', FIRE = '\uD83D\uDD25', BULB = '\uD83D\uDCA1';
   var ON = '\uD83D\uDFE6', OFF = '\u2B1B';
   var WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -379,6 +496,7 @@
       gems + ' all ' + r.targets + ' lit',
       MIRROR + ' ' + r.mirrors + '/' + r.budget + ' mirrors  ' + CLOCK + ' ' + clock(r.ms) + '  ' + TAP + ' ' + r.moves + (r.moves === 1 ? ' move' : ' moves')
     ];
+    if (r.hints > 0) { var bulbs = ''; for (i = 0; i < r.hints; i++) bulbs += BULB; lines.push(bulbs + ' ' + r.hints + (r.hints === 1 ? ' hint' : ' hints')); }
     if (!r.practice && r.streak > 1) lines.push(FIRE + ' ' + r.streak + '-day streak');
     lines.push(r.url || 'mridulsaravanan.com/lightline/');
     return lines.join('\n');
@@ -389,11 +507,16 @@
     fnv1a: fnv1a, mulberry32: mulberry32,
     dayKey: dayKey, shiftDay: shiftDay, weekday: weekday, levelForDay: levelForDay, prettyDay: prettyDay, clock: clock,
     trace: trace, countPlaced: countPlaced, isSolved: isSolved, cellAt: cellAt, emitterStart: emitterStart,
-    // the page only ever uses .puzzle; the solution is for the tests
+    // the page uses .solution only for hints and Show answer
     puzzleFor: function (seed, level) { return generate(seed, level).puzzle; },
     dailyPuzzle: function (day) { return daily(day).puzzle; },
     generate: generate, daily: daily, solve: solve, minMirrors: minMirrors, counters: counters,
     emptyStats: emptyStats, validStats: validStats, parseStats: parseStats, recordWin: recordWin, currentStreak: currentStreak,
+    XP: XP, UNLOCK: UNLOCK, MAX_HINTS: MAX_HINTS,
+    mergeHistory: mergeHistory, historyFromStats: historyFromStats, statsFromHistory: statsFromHistory,
+    xpFor: xpFor, totalXp: totalXp, xpToReach: xpToReach, levelInfo: levelInfo, playerLevel: playerLevel,
+    unlockLevel: unlockLevel, isUnlocked: isUnlocked, practiceLevelFor: practiceLevelFor,
+    parseProfile: parseProfile, mergeProfiles: mergeProfiles, readPullResponse: readPullResponse,
     shareText: shareText,
     testing: {
       solution: function (day) { return daily(day).solution; },
